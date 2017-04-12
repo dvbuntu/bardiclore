@@ -3,6 +3,7 @@ from keras.layers import Dense, Activation
 from keras.layers import LSTM, GRU
 from keras.layers.recurrent import SimpleRNN
 from keras.layers.embeddings import Embedding
+from keras.regularizers import l2
 from keras.optimizers import RMSprop
 import numpy as np
 from tqdm import tqdm
@@ -112,7 +113,7 @@ class bard(object):
         return np.argmax(probas)
     def step(self,n=1,verbose=True):
         for i in range(n):
-            probs = model.predict(self.dense)[0]
+            probs = self.model.predict(self.dense)[0]
             idx = self.sample(probs, self.diversity)
             self.text += self.chars[idx]
             self.onehot[0,:-1] = self.onehot[0,1:]
@@ -131,17 +132,62 @@ b2.step(10)
 b2.step(1000)
 
 # new simple model
+# and simple data
+sfile = 'drseuss.txt'
+
+with open(sfile,'r',errors='ignore') as f:
+    raw = f.read()
+
+lowers = string.ascii_lowercase
+
+k = set(raw.lower()) - set(lowers)
+''.join(sorted(k))
+
+extra = "\n !?';,."
+allowed = set(lowers + extra )
+from collections import Counter, defaultdict
+
+D = dict([(k,k) if k in allowed else (k, ' ') for k in set(raw.lower())])
+keys = ''.join(D.keys())
+vals = ''.join([D[k] for k in keys])
+DD = str.maketrans(keys,vals)
+
+data = raw.lower().translate(DD)
+
+# collect repeated spaces and newlines
+while '  ' in data:
+    data = data.replace('  ',' ')
+while '\n\n' in data:
+    data = data.replace('\n\n','\n')
+while '\n \n' in data:
+    data = data.replace('\n \n','\n')
+
+epochs = 5
+num_blocks = 1
+
+
+# truncate the data and reshape
+data = data[:-(len(data)%num_blocks)]
+data = np.array(list(data)).reshape([num_blocks,-1])
+
+
+chars = list(lowers+extra)
+
+# change unroll length
+step = 1
+char_indices = dict((c, i) for i, c in enumerate(chars))
+indices_char = dict((i, c) for i, c in enumerate(chars))
+
+
+
 maxlen = 40
 model = Sequential()
 model.add(Embedding(len(chars), 48,input_length=maxlen))
-model.add(LSTM(64))
+model.add(LSTM(64,W_regularizer=l2(0.0001)))
 model.add(Dense(len(chars)))
 model.add(Activation('softmax'))
 
 model.compile(loss='categorical_crossentropy', optimizer='adadelta', metrics = ['accuracy'])
-
-epochs = 5
-num_blocks = 5
 
 for j in tqdm(range(epochs)):
     for b in tqdm(range(num_blocks)):
@@ -167,6 +213,52 @@ for j in tqdm(range(epochs)):
 
 E, K1,R1,b1, Wf, bf= model.get_weights()
 
+dr = bard(model, maxlen=40)
+
+dr.step(1000,verbose=True)
+
+
+# and more data
+afile = 'aesop.txt'
+
+with open(afile,'r',errors='ignore') as f:
+    raw = f.read()
+
+lowers = string.ascii_lowercase
+
+k = set(raw.lower()) - set(lowers)
+''.join(sorted(k))
+
+extra = "\n !?';,."
+allowed = set(lowers + extra )
+from collections import Counter, defaultdict
+
+D = dict([(k,k) if k in allowed else (k, ' ') for k in set(raw.lower())])
+keys = ''.join(D.keys())
+vals = ''.join([D[k] for k in keys])
+DD = str.maketrans(keys,vals)
+
+adata = raw.lower().translate(DD)
+
+# collect repeated spaces and newlines
+while '  ' in adata:
+    adata = adata.replace('  ',' ')
+while '\n\n' in adata:
+    adata = adata.replace('\n\n','\n')
+while '\n \n' in adata:
+    adata = adata.replace('\n \n','\n')
+
+num_blocks = 5
+
+# truncate the adata and reshape
+adata = adata[:-(len(adata)%num_blocks)]
+adata = np.array(list(adata)).reshape([num_blocks,-1])
+
+
+
+
+
+
 model2 = Sequential()
 model2.add(Embedding(len(chars), 48,input_length=maxlen))
 model2.add(LSTM(64, return_sequences=True))
@@ -182,15 +274,21 @@ WW[:4] = [E,K1,R1,b1]
 model2.set_weights(WW)
 
 epochs = 5
-num_blocks = 8
+
+dr = bard(model2, maxlen=40)
+
+dr.step(1000,verbose=True)
+
+
+
 
 for j in tqdm(range(epochs)):
     for b in tqdm(range(num_blocks)):
         sentences = []
         next_chars = []
-        for i in range(0, len(data[b]) - maxlen, step):
-                sentences.append(data[b,i: i + maxlen])
-                next_chars.append(data[b,i + maxlen])
+        for i in range(0, len(adata[b]) - maxlen, step):
+                sentences.append(adata[b,i: i + maxlen])
+                next_chars.append(adata[b,i + maxlen])
         # stick with dense encoding
         X = np.zeros([len(sentences),maxlen],dtype=np.uint8)
         # encode all in one-hot
@@ -224,8 +322,13 @@ WW[:7] = WW2[:7]
 
 model3.set_weights(WW)
 
-epochs = 3
-num_blocks = 10
+dr = bard(model3, maxlen=40)
+
+dr.step(1000,verbose=True)
+
+
+epochs = 1
+num_blocks = 5
 
 for j in tqdm(range(epochs)):
     for b in tqdm(range(num_blocks)):
@@ -255,9 +358,9 @@ WW3 = model3.get_weights()
 
 model4 = Sequential()
 model4.add(Embedding(len(chars), 48,input_length=maxlen))
-model4.add(LSTM(128, return_sequences=True))
-model4.add(LSTM(64, return_sequences=True))
-model4.add(LSTM(64))
+model4.add(LSTM(128, activity_regularizer = l2(0.001), return_sequences=True))
+model4.add(LSTM(64, activity_regularizer = l2(0.001),return_sequences=True))
+model4.add(LSTM(64, activity_regularizer = l2(0.001)))
 model4.add(Dense(len(chars)))
 model4.add(Activation('softmax'))
 
@@ -277,8 +380,8 @@ WW[3][256:384] = WW3[3][128:]
 model4.set_weights(WW)
 
 
-epochs = 2
-num_blocks = 10
+epochs = 100
+num_blocks = 5
 
 for j in tqdm(range(epochs)):
     for b in tqdm(range(num_blocks)):
@@ -300,6 +403,11 @@ for j in tqdm(range(epochs)):
             X[i+1, -1] = char_indices[next_chars[i]]
             Y[i+1, char_indices[next_chars[i+1]]] = 1
         model4.fit(X,Y,epochs=1,validation_split=0.1)
-    model4.save_weights('bardicweights_large_{0}.h5'.format(j))
+    if j % 10 == 0:
+        model4.save_weights('bardicweights_large_{0}.h5'.format(j))
+
+dr = bard(model4, maxlen=40)
+
+dr.step(1000,verbose=True)
 
 
